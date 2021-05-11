@@ -1040,3 +1040,9 @@ Then start and enable service:
 systemctl start chronyd
 systemctl enable chornyd
 ```
+
+Our nodes are now configured with the very basic needs. Time to focus on storage.
+
+## Storage
+
+Storage is hosted on `thor`
