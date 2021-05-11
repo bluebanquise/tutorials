@@ -895,6 +895,8 @@ systemctl enable fbtftp_server
 
 We can proceed with the boot of `thor` node, and then the other nodes.
 
+## Other nodes installation
+
 ### Boot over PXE
 
 Open 2 shell on `odin`. In the first one, launch watch logs of dhcp and tftp server using:
@@ -913,4 +915,128 @@ Now, boot the `thor` node over PXE, and watch it deploy. Also watch the logs to
 understand all steps.
 
 Once the operating system is installed, and the node has rebooted, have it boot
-over disk, 
+over disk, and ensure operating system is booted before proceeding.
+
+Repeat this operation to deploy each nodes of your cluster.
+
+### Configure client side
+
+Now that other nodes are deployed and reachable over ssh, it is time to configure client side on them.
+
+#### Set hostname
+
+Set hostname on each nodes using the following command (tuned for each nodes of course):
+
+```
+hostnamectl set-hostname thor.cluster.local
+```
+
+#### Configure repositories
+
+You need the nodes be able to grab packages from `odin`.
+
+On each client node, backup current repositories, and clean them:
+
+```
+cp -a /etc/yum.repos.d/ /root/yum.repos.d.backup
+rm -f /etc/yum.repos.d/*.repo
+```
+
+Now create file `/etc/yum.repos.d/os.repo` with the following content:
+
+```
+[BaseOS]
+name=BaseOS
+baseurl=http://10.10.0.1/repositories/centos/8/x86_64/os/BaseOS
+gpgcheck=0
+enabled=1
+
+[AppStream]
+name=AppStream
+baseurl=http://10.10.0.1/repositories/centos/8/x86_64/os/AppStream
+gpgcheck=0
+enabled=1
+```
+
+And create file `/etc/yum.repos.d/extra.repo` with the following content:
+
+```
+[Extra]
+name=Extra
+baseurl=http://10.10.0.1/repositories/centos/8/x86_64/extra
+gpgcheck=0
+enabled=1
+```
+
+Now clean cache, and ensure you can reach the repositories and download packages (try to install wget for example):
+
+```
+dnf clean all
+dnf update
+dnf install wget -y
+```
+
+#### DNS client
+
+On each client node, set `odin` as default DNS server, by updating `/etc/resolv.conf` file with the following content:
+
+```
+search cluster.local
+nameserver 10.10.0.1
+```
+
+You can also simply upload the file from `odin` on clients, using scp.
+
+#### Hosts file
+
+On each client, edit `/etc/hosts` file and have it match the following:
+
+```
+127.0.0.1   localhost localhost.localdomain localhost4 localhost4.localdomain4
+::1         localhost localhost.localdomain localhost6 localhost6.localdomain6
+
+10.10.0.1   odin
+10.10.1.1   thor
+10.10.2.1   heimdall
+10.10.3.1   valkyrie01
+10.10.3.2   valkyrie02
+```
+
+You can also simply upload the file from `odin` on clients, using scp.
+
+#### Time client
+
+On each client, ensure time server is `odin` sp that our cluster is time synchronised.
+
+Install needed packages:
+
+```
+dnf install chrony
+```
+
+Configuration file is `/etc/chrony.conf`. The file content should be as bellow:
+
+```
+# Source server to bind to
+server 10.10.0.1 iburst
+
+# Record the rate at which the system clock gains/losses time.
+driftfile /var/lib/chrony/drift
+
+# Allow the system clock to be stepped in the first three updates
+# if its offset is larger than 1 second.
+makestep 1.0 3
+
+# Enable kernel synchronization of the real-time clock (RTC).
+rtcsync
+
+# Specify directory for log files.
+logdir /var/log/chrony
+```
+
+Then start and enable service:
+
+```
+systemctl start chronyd
+systemctl enable chornyd
+```
