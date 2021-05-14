@@ -1137,6 +1137,414 @@ Munge will be used to handle authentication between Slurm daemons.
 
 >>>>>>>>>>>>>>>>>
 
+Slurm controller side is called slurmctld while on compute nodes, it is called slurmd .
+On the "submitter" node, no daemon except munge is required.
+
+Tip: if anything goes wrong with slurm, proceed as following:
+
+1. Ensure time is exactly the same on nodes. If time is different, munge based authentication will fail.
+2. Ensure munge daemon is started, and that munge key is the same on all hosts (check md5sum for example).
+3. Stop slurmctld and stop slurmd daemons, and start them in two different shells manually in debug + verbose mode: `slurmctld -D -vvvvvvv` in shell 1 on controller server, and `slurmd -D -vvvvvvv` in shell 2 on compute node.
+
 ### Controller
 
-Slurm controller side 
+Install munge needed packages:
+
+```
+dnf install munge....
+```
+
+And generate a munge key:
+
+```
+mungekey -c -f -k /etc/munge/munge.key
+```
+
+We will spread this key over all servers of the cluster.
+
+Lets start and enable munge daemon:
+
+```
+systemctl start munge
+systemctl enable munge
+```
+
+Now install slurm controller `slurmctld` packages:
+
+```
+dnf install slurm....
+```
+
+Lets create a very minimal slurm configuration.
+
+Create file `/etc/slurm/slurm.conf` with the following content:
+
+```
+# Documentation:
+# https://slurm.schedmd.com/slurm.conf.html
+
+## Controller
+ClusterName=valhalla
+ControlMachine=odin
+
+## Authentication
+SlurmUser=slurm
+AuthType=auth/munge
+CryptoType=crypto/munge
+
+## Logging
+SlurmctldDebug=5
+SlurmdDebug=5
+
+## We don't want a node to go back in pool without sys admin acknowledgement
+ReturnToService=0
+
+## Using pmi/pmi2/pmix interface for MPI
+MpiDefault=pmi2
+
+## Basic scheduling based on nodes
+SchedulerType=sched/backfill
+SelectType=select/linear
+
+## Nodes definition
+NodeName=valkyrie01 Procs=1
+NodeName=valkyrie02 Procs=1
+
+## Partitions definition
+PartitionName=all MaxTime=INFINITE State=UP Default=YES Nodes=valkyrie01,valkyrie02
+```
+
+Also create file `/etc/slurm/cgroup.conf` with the following content:
+
+```
+CgroupAutomount=yes
+ConstrainCores=yes
+```
+
+And start slurm controller:
+
+```
+systemctl start slurmctld
+systemctl enable slurmctld
+```
+
+Using `sinfo` command, you should now see the cluster start, with both computes nodes down for now.
+
+### Computes nodes
+
+On both `valkyrie01,valkyrie02` nodes, install munge the same way than on controller.
+
+```
+dnf install munge....
+```
+
+Ensure munge key generated on controller node is spread on each client. From `odin`, scp the file:
+
+```
+scp /etc/munge/munge.key valkyrie01:/etc/munge/munge.key
+scp /etc/munge/munge.key valkyrie02:/etc/munge/munge.key
+```
+
+And start munge on each compute node:
+
+```
+systemctl start munge
+systemctl enable munge
+```
+
+Now on each compute node, install slurmd needed packages:
+
+```
+dnf install slurm....
+```
+
+Now again, spread same slurm configuration files from `odin` to each compute nodes:
+
+```
+scp /etc/slurm/slurm.conf valkyrie01:/etc/slurm/slurm.conf
+scp /etc/slurm/cgroup.conf valkyrie01:/etc/slurm/cgroup.conf
+scp /etc/slurm/slurm.conf valkyrie02:/etc/slurm/slurm.conf
+scp /etc/slurm/cgroup.conf valkyrie02:/etc/slurm/cgroup.conf
+```
+
+And start on each compute node slurmd service:
+
+```
+systemctl start slurmd
+systemctl enable slurmd
+```
+
+### Submitter
+
+Last step to deploy slurm is to install the login node, `heimdall`, that will act as
+a submitter.
+
+A slurm submitter only need configuration files, and an active munge.
+
+Install munge the same way than on controller.
+
+```
+dnf install munge....
+```
+
+Ensure munge key generated on controller node is spread here:
+
+```
+scp /etc/munge/munge.key heimdall:/etc/munge/munge.key
+```
+
+And start munge on `heimdall`:
+
+```
+systemctl start munge
+systemctl enable munge
+```
+
+No install minimal slurm packages:
+
+```
+dnf install slurm....
+```
+
+Now again, spread same slurm configuration files from `odin` to `heimdall`:
+
+```
+scp /etc/slurm/slurm.conf heimdall:/etc/slurm/slurm.conf
+scp /etc/slurm/cgroup.conf heimdall:/etc/slurm/cgroup.conf
+```
+
+Nothing to start here, you can test `sinfo` command from `heimdall` to ensure it works.
+
+Slurm cluster is now ready.
+
+### Submitting jobs
+
+To execute calculations on the cluster, users will rely on Slurm to submit jobs and get calculation resources.
+Submit commands are `srun` and `sbatch`.
+
+Before using Slurm, it is important to understand how resources are requested.
+A calculation node is composed of multiple calculation cores. When asking for resources, it is possible to ask the following:
+
+* I want this much calculations processes (one per core), do what is needed to provide them to me -> use `-n`.
+* I want this much nodes, I will handle the rest -> use `-N`.
+* I want this much nodes and I want you to start this much processes per nodes -> use `-N` combined with `--ntasks-per-node`.
+* I want this much calculations processes (one per core), and this much processes per nodes, calculate yourself the number of nodes required for that -> use `--ntasks-per-node` combined with `-n`.
+* Etc.
+
+`-N`, `-n` and `--ntasks-per-node` are complementary, and only two of them should be used at a time (slurm will deduce the last one using number of cores available on compute nodes as written in the slurm configuration file).
+`-N` specifies the total number of nodes to allocate to the job, `-n` the total number of processes to start, and `--ntasks-per-node` the number of processes to launch per node. 
+
+```
+n=N*ntasks-per-node
+```
+
+#### Submitting without a script
+
+It is possible to launch a very simple job without a script, using the `srun` command. To do that, use `srun` directly, specifying the number of nodes required. For example:
+
+```
+srun -N 1 hostname
+```
+
+Result can be: `valkyrie01`
+
+```
+srun -N 2 hostname
+```
+
+Result can be :
+
+```
+valkyrie01
+valkyrie02
+```
+
+Using this method is a good way to test cluster, or compile code on compute nodes directly, or just use the compute and memory capacity of a node to do simple tasks on it.
+
+#### Basic job script
+
+To submit a basic job scrip, user needs to use `sbatch` command and provides it a script to execute which contains at the beginning some Slurm information.
+
+A very basic script is:
+
+```
+#!/bin/bash                                                                                    
+#SBATCH -J myjob                                                                              
+#SBATCH -o myjob.out.%j                                                                       
+#SBATCH -e myjob.err.%j                                                                       
+#SBATCH -N 1                                                                                   
+#SBATCH -n 1                                                                                   
+#SBATCH --ntasks-per-node=1                                                                    
+#SBATCH -p all                                                                        
+#SBATCH --exclusive                                                                            
+#SBATCH -t 00:10:00                                                                            
+ 
+echo "###"                                                                                     
+date                                                                                           
+echo "###"                                                                                     
+
+echo "Hello World ! "
+hostname
+sleep 30s
+echo "###"
+date
+echo "###"
+```
+
+It is very important to understand Slurm parameters here:
+*	`-J` is to set the name of the job
+*	`-o` to set the output file of the job
+*	`-e` to set the error output file of the job
+*	`-p` to select partition to use (optional)
+*	`--exclusive` to specify nodes used must not be shared with other users (optional)
+*	`-t` to specify the maximum time allocated to the job (job will be killed if it goes beyond, beware). Using a small time allow to be able to run a job quickly in the waiting queue, using a large time will force to wait more
+*	`-N`, `-n` and `--ntasks-per-node` were already described.
+
+To submit this script, user needs to use sbatch:
+
+```
+sbatch myscript.sh
+```
+
+If the script syntax is ok, `sbatch` will return a job id number. This number can be used to follow the job progress, using `squeue` (assuming job number is 91487):
+
+```
+squeue -j 91487
+```
+
+Check under ST the status of the job. PD (pending), R (running), CA (cancelled), CG (completing), CD (completed), F (failed), TO (timeout), and NF (node failure).
+
+It is also possible to check all user jobs running:
+
+```
+squeue -u myuser
+```
+
+In this example, execution results will be written by Slurm into `myjob.out.91487` and `myjob.err.91487`.
+
+#### Serial job
+
+To launch a very basic serial job, use the following template as a script for `sbatch`:
+
+```
+#!/bin/bash
+#SBATCH -J myjob
+#SBATCH -o myjob.out.%j
+#SBATCH -e myjob.err.%j
+#SBATCH -N 1
+#SBATCH --ntasks-per-node=1
+#SBATCH --exclusive
+#SBATCH -t 03:00:00
+
+echo "############### START #######"
+date
+echo "############### "
+
+/home/myuser/./myexecutable.exe
+
+echo "############### END #######"
+date
+echo "############### "
+```
+
+#### OpenMP job
+
+To launch an OpenMP job (with multithreads), assuming the code was compiled with openmp flags, use:
+
+```
+#!/bin/bash
+#SBATCH -J myjob
+#SBATCH -o myjob.out.%j
+#SBATCH -e myjob.err.%j
+#SBATCH -N 1
+#SBATCH --ntasks-per-node=1
+#SBATCH --exclusive
+#SBATCH -t 03:00:00
+
+## If compute node has 24 cores
+export OMP_NUM_THREADS=24
+## If needed, to be tuned to needs
+export OMP_SCHEDULE="dynamic, 100"
+
+echo "############### START #######"
+date
+echo "############### "
+
+/home/myuser/./myparaexecutable.exe
+
+echo "############### END #######"
+date
+echo "############### "
+```
+
+Note that it is assumed here that a node has 24 cores.
+
+####MPI job
+
+To submit an MPI job, assuming the code was parallelized with MPI and compile with MPI, use (note the `srun`, replacing the `mpirun`):
+
+```
+#!/bin/bash
+#SBATCH -J myjob
+#SBATCH -o myjob.out.%j
+#SBATCH -e myjob.err.%j
+#SBATCH -N 4
+#SBATCH --ntasks-per-node=24
+#SBATCH --exclusive
+#SBATCH -t 03:00:00
+
+echo "############### START #######"
+date
+echo "############### "
+
+srun /home/myuser/./mympiexecutable.exe
+
+echo "############### END #######"
+date
+echo "############### "
+```
+
+`srun` will act as `mpirun`, but providing automatically all already tuned arguments for the cluster.
+
+## Users
+
+To have users on the cluster, you need to have the users registered on each node, with same pid and same group gid.
+
+There are multiple ways to synchronize users on a cluster of nodes. Popular tools are based on Ldap or Ad.
+However, this is out of the scope of this tutorial, and so we will manage users manually on our small cluster.
+
+To generate a user with a fix pid and fix gid, use the following commands on `heimdall` login node:
+
+```
+groupadd -g 2001 myuser
+adduser myuser --shell /bin/bash -d /home/myuser -u 2001 -g 2001
+mkdir /home/myuser
+chown -R myuser:myuser /home/myuser
+```
+
+Then on all other nodes, including `thor` and `odin`, create user only (no need to recreate the `/home` as it is spread over NFS)
+
+On each other nodes, do the following:
+
+```
+groupadd -g 2001 myuser
+adduser myuser --shell /bin/bash -d /home/myuser -u 2001 -g 2001
+```
+
+Note: for each new user, increment the user number (2002 -> 2003 -> 2004 -> etc.).
+Also, use number above 2000 to avoid issues or conflict with possible system ids.
+
+## Conclusion
+
+The cluster is ready to be used.
+
+Additional task could be done:
+
+* Compiling an up to date GCC suit
+* Compiling an MPI suite
+* Adding monitoring on the cluster
+* Enabling Slurm accounting
+* Etc.
+
+You can also rely on an opensource Stack that provides all of this.
+Of course, I will recommended BlueBanquise (https://github/bluebanquise/bluebanquise) but many other stacks exist.
