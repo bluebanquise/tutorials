@@ -1038,11 +1038,105 @@ Then start and enable service:
 
 ```
 systemctl start chronyd
-systemctl enable chornyd
+systemctl enable chronyd
 ```
 
 Our nodes are now configured with the very basic needs. Time to focus on storage.
 
 ## Storage
 
-Storage is hosted on `thor`
+Storage is hosted on `thor`. We will share `/home` and `/software` from this server.
+Then we will mount these directories on the login node `heimdall` and computes nodes `valkyrie01,valkyrie02`.
+
+### NFS server
+
+Ssh on `thor`.
+
+Now ensure first these 2 directories exist:
+
+```
+mkdir /home
+mkdir /software
+```
+
+Now, install needed packages:
+
+```
+dnf install nfs-utils -y
+```
+
+Now, ask the nfs server daemon to export those directories over the network.
+
+Since `/home` is expected to be used by users to store there data, it must be read/write access.
+On the other hand, `/software` is designed to provide software (compiler, libraries, etc.) across
+the cluster, and so it should be read only access.
+
+Edit `/etc/exports` file, and add the 2 exported folders with good parameters:
+
+```
+/home 10.10.0.0/16(rw,no_root_squash,sync)
+/software 10.10.0.0/16(ro,no_root_squash,sync)
+```
+
+Simply put, we ask here nfs-server to export both directories, restricted only to the 
+10.10.0.0/16 subnet. Note that one is `rw` (read/write), the other is `ro` (read only).
+
+Start now the nfs-server:
+
+```
+systemctl start nfs-server
+systemctl enable nfs-server
+```
+
+Now, ensure the exports are working, using the following command targeting the server ip:
+
+```
+showmount -e thor
+```
+
+You should see the exports available on this server.
+
+### NFS clients
+
+Ssh on `heimdall`.
+
+Install needed packages to mount nfs foreign export:
+
+```
+dnf install nfs-utils -y
+```
+
+Now edit `/etc/fstab` file, and add the 2 entries needed for our folders exported by `thor`:
+
+```
+thor:/home /home nfs rw,rsize=32768,wsize=32768,intr,nfsvers=4,bg 0 0
+thor:/software /software nfs ro,intr,nfsvers=4,bg 0 0
+```
+
+Note: bg parameter ensure that the mounts are done in background mode. This avoid 
+blocking the system at boot if these folder are not reachable (for example if `thor` server is down at this very moment).
+
+Now ask for mount of them:
+
+```
+mount /home
+mount /software
+```
+
+And ensure they are mounted using `df` command.
+
+Redo these client steps on all other clients, so computes nodes `valkyrie01,valkyrie02`,
+so that the exported folders are available on each nodes where users interact.
+
+## Slurm
+
+Let's install now the cluster job scheduler, Slurm.
+
+First, we need to build packages. Grab Munge and Slurm sources.
+Munge will be used to handle authentication between Slurm daemons.
+
+>>>>>>>>>>>>>>>>>
+
+### Controller
+
+Slurm controller side 
