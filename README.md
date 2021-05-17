@@ -697,9 +697,11 @@ It is now time to setup the PXE stack, which is composed of the dhcp server, the
 
 The http server will distribute the minimal kernel and initramfs for remote Linux booting, the kickstart autoinstall file for remote hosts to know how they should be installed, and the repositories for packages distribution. Some very basic files will be provided using tftp as this is the most compatible PXE protocol.
 
-#### iPXE rom
+Note that the Centos already embed a very basic tftp server. But it cannot handle an HPC cluster load, and so we replace it by the Facebook python based tftp server.
 
-We first need a TFTP server. We will create one based on the Facebook Tftp server.
+#### fbtftp module
+
+Lets grab python module first:
 
 ```
 mkdir fbtftp-0.4
@@ -712,29 +714,247 @@ tar cvzf fbtftp-0.4.tar.gz fbtftp-0.4
 rpmbuild -ta fbtftp-0.4.tar.gz
 ```
 
-Install needed packages packages (http server is already installed):
+#### fbtftp custom server
+
+Now create a custom tftp server based on fbtftp. Create first needed folders:
 
 ```
-dnf install tftp fbtftp fbtftp_server
+mkdir fbtftp_server-0.1
+mkdir fbtftp_server-0.1/services
 ```
 
-Note that the Centos already embed a very basic tftp server. But it cannot handle an HPC cluster load, and so we replace it by the Facebook python based tftp server.
+Now create file `fbtftp_server-0.1/fbtftp_server.py` with the following content:
+
+```
+#!/usr/bin/env python3
+# Copyright (c) Facebook, Inc. and its affiliates.
+
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
+
+import argparse
+import logging
+import os
+
+from fbtftp.base_handler import BaseHandler
+from fbtftp.base_handler import ResponseData
+from fbtftp.base_server import BaseServer
+
+
+class FileResponseData(ResponseData):
+    def __init__(self, path):
+        self._size = os.stat(path).st_size
+        self._reader = open(path, "rb")
+
+    def read(self, n):
+        return self._reader.read(n)
+
+    def size(self):
+        return self._size
+
+    def close(self):
+        self._reader.close()
+
+
+def print_session_stats(stats):
+    logging.info("Stats: for %r requesting %r" % (stats.peer, stats.file_path))
+    logging.info("Error: %r" % stats.error)
+    logging.info("Time spent: %dms" % (stats.duration() * 1e3))
+    logging.info("Packets sent: %d" % stats.packets_sent)
+    logging.info("Packets ACKed: %d" % stats.packets_acked)
+    logging.info("Bytes sent: %d" % stats.bytes_sent)
+    logging.info("Options: %r" % stats.options)
+    logging.info("Blksize: %r" % stats.blksize)
+    logging.info("Retransmits: %d" % stats.retransmits)
+    logging.info("Server port: %d" % stats.server_addr[1])
+    logging.info("Client port: %d" % stats.peer[1])
+
+
+def print_server_stats(stats):
+    """
+    Print server stats - see the ServerStats class
+    """
+    # NOTE: remember to reset the counters you use, to allow the next cycle to
+    #       start fresh
+    counters = stats.get_and_reset_all_counters()
+    logging.info("Server stats - every %d seconds" % stats.interval)
+    if "process_count" in counters:
+        logging.info(
+            "Number of spawned TFTP workers in stats time frame : %d"
+            % counters["process_count"]
+        )
+
+
+class StaticHandler(BaseHandler):
+    def __init__(self, server_addr, peer, path, options, root, stats_callback):
+        self._root = root
+        super().__init__(server_addr, peer, path, options, stats_callback)
+
+    def get_response_data(self):
+        return FileResponseData(os.path.join(self._root, self._path))
+
+
+class StaticServer(BaseServer):
+    def __init__(
+        self,
+        address,
+        port,
+        retries,
+        timeout,
+        root,
+        handler_stats_callback,
+        server_stats_callback=None,
+    ):
+        self._root = root
+        self._handler_stats_callback = handler_stats_callback
+        super().__init__(address, port, retries, timeout, server_stats_callback)
+
+    def get_handler(self, server_addr, peer, path, options):
+        return StaticHandler(
+            server_addr, peer, path, options, self._root, self._handler_stats_callback
+        )
+
+
+def get_arguments():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--ip", type=str, default="::", help="IP address to bind to")
+    parser.add_argument("--port", type=int, default=1969, help="port to bind to")
+    parser.add_argument(
+        "--retries", type=int, default=5, help="number of per-packet retries"
+    )
+    parser.add_argument(
+        "--timeout_s", type=int, default=2, help="timeout for packet retransmission"
+    )
+    parser.add_argument(
+        "--root", type=str, default="", help="root of the static filesystem"
+    )
+    return parser.parse_args()
+
+
+def main():
+    args = get_arguments()
+    logging.getLogger().setLevel(logging.DEBUG)
+    server = StaticServer(
+        args.ip,
+        args.port,
+        args.retries,
+        args.timeout_s,
+        args.root,
+        print_session_stats,
+        print_server_stats,
+    )
+    try:
+        server.run()
+    except KeyboardInterrupt:
+        server.close()
+
+
+if __name__ == "__main__":
+    main()
+```
+
+This file is our custom server, that will use fbtftp module.
+
+Then create file `fbtftp_server-0.1/services/fbtftp_server.service` with the following content:
+
+```
+[Unit]
+Description=Facebook TFTP server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env python3 /usr/local/bin/fbtftp_server.py --root /var/lib/tftpboot/ --port 69
+
+[Install]
+WantedBy=multi-user.target
+```
+
+This file is the service file, that we will use to start or stop our custom server.
+
+And finally, create file `fbtftp_server-0.1/fbtftp_server.spec` with the following content:
+
+```
+Name:     fbtftp_server
+Summary:  fbtftp_server
+Release:  1%{?dist}
+Version:  0.1
+License:  MIT
+Group:    System Environment/Base
+URL:      https://github.com/bluebanquise/
+Source:   https://bluebanquise.com/sources/fbtftp_server-0.1.tar.gz
+Packager: Benoit Leveugle <benoit.leveugle@gmail.com>
+
+Requires: fbtftp
+
+%define debug_package %{nil}
+
+%description
+Facebook tftp simple implementation, based on server example from
+https://github.com/facebook/fbtftp/tree/master/examples
+
+%prep
+
+%setup -q
+
+%build
+
+%install
+# Populate binaries
+mkdir -p $RPM_BUILD_ROOT/usr/local/bin/
+cp -a fbtftp_server.py $RPM_BUILD_ROOT/usr/local/bin/
+
+# Add services
+mkdir -p $RPM_BUILD_ROOT/usr/lib/systemd/system/
+cp -a services/fbtftp_server.service $RPM_BUILD_ROOT/usr/lib/systemd/system/
+
+%files
+%defattr(-,root,root,-)
+/usr/local/bin/fbtftp_server.py
+/usr/lib/systemd/system/fbtftp_server.service
+
+%changelog
+
+* Wed Oct 07 2020 Benoit Leveugle <benoit.leveugle@gmail.com>
+- Create
+```
+
+This file specify how the package should be built.
+
+Lets now create the package:
+
+```
+tar cvzf fbtftp_server-0.1.tar.gz fbtftp_server-0.1
+rpmbuild -ta fbtftp_server-0.1.tar.gz --target=noarch
+```
+
+Copy both packages into our extra repository, update the repository:
+
+```
+cp /root/rpmbuild/RPMS/noarch/fbtftp-0.4-1.noarch.rpm /var/www/html/repositories/centos/8/x86_64/extra/
+cp /root/rpmbuild/RPMS/noarch/fbtftp_server-0.1-1.el8.noarch.rpm /var/www/html/repositories/centos/8/x86_64/extra/
+createrepo /var/www/html/repositories/centos/8/x86_64/extra/
+dnf clean all
+```
+
+Now install both packages:
+
+```
+dnf install fbtftp_server -y
+```
+
+#### iPXE custom rom
 
 We then need ipxe files. We could use native syslinux or shim.efi files, but this is just not flexible enough for new generation HPC clusters.
 Also, ipxe files provided by Centos are way too old. We will build them ourselves, and include our own init script.
 
 Grab latest ipxe version from git.
 
-To do so, install git:
+To do so, install needed tools to build C code:
 
 ```
-dnf install git
-```
-
-Also install needed tools to build C code:
-
-```
-dnf groupinstall "Development tools"
+dnf groupinstall "Development tools" -y
+dnf install xz-devel -y
 ```
 
 Then clone the ipxe repository into `/root/ipxe`:
@@ -810,21 +1030,29 @@ Then enter the src directory and build the needed files:
 
 ```
 cd src
-make -j $nb_cores bin-x86_64-efi/ipxe.efi EMBED=our_script.ipxe DEBUG=intel,dhcp,vesafb
-make -j $nb_cores bin/undionly.kpxe EMBED=our_script.ipxe DEBUG=intel,dhcp,vesafb
+make -j 4 bin-x86_64-efi/ipxe.efi EMBED=our_script.ipxe DEBUG=intel,dhcp,vesafb
+make -j 4 bin/undionly.kpxe EMBED=our_script.ipxe DEBUG=intel,dhcp,vesafb
 ```
 
 And finally copy these files into the `/var/lib/tftpboot/` folder so that tftp server
 can provide them to the nodes booting.
 
 ```
+mkdir -p /var/lib/tftpboot/
 cp bin-x86_64-efi/ipxe.efi /var/lib/tftpboot/
 cp bin/undionly.kpxe /var/lib/tftpboot/
 ```
 
+Finally, start fbtftp_server service:
+
+```
+systemctl start fbtftp_server
+systemctl enable fbtftp_server
+```
+
 #### iPXE chain
 
-Now create file `/var/www/html/boot.ipxe` that will be targeted by each node booting.
+Now we will create file `/var/www/html/boot.ipxe` that will be targeted by each node booting.
 There are multiple strategy here. We could simply add basic boot information in this file and consider it done.
 But we would quickly face an issue: how to handle different parameters per nodes? Maybe one kind of node need a specific console or kernel parameter that the others do not need.
 
@@ -837,9 +1065,10 @@ Create folder:
 
 ```
 mkdir /var/www/html/nodes/
+mkdir /var/www/html/nodes_groups/
 ```
 
-And create `boot.ipxe` file with the following content:
+And create `/var/www/html/boot.ipxe` file with the following content:
 
 ```
 #!ipxe
@@ -852,7 +1081,35 @@ our node to this group.
 
 Create file `/var/www/html/nodes_groups/group_storage.ipxe` with the following content:
 
->>>>>>>>>>>>>>>>>>>>>
+```
+#!ipxe
+
+echo Booting OS
+echo Group profile: storage
+
+echo +----------------------------------------------------+
+echo |
+echo | Loading kernel
+
+kernel http://${next-server}/repositories/centos/8/x86_64/os/images/pxeboot/vmlinuz initrd=initrd.img inst.stage2=http://${next-server}/repositories/centos/8/x86_64/os/ inst.repo=http://${next-server}/repositories/centos/8/x86_64/os/BaseOS/ ks=http://${next-server}/nodes_groups/group_storage.kickstart.cfg
+
+echo | Loading initial ramdisk ...
+
+initrd http://${next-server}/repositories/centos/8/x86_64/os/images/pxeboot/initrd.img
+
+echo | ALL DONE! We are ready.
+echo | Downloaded images report:
+
+imgstat
+
+echo | Booting in 4s ...
+echo |
+echo +----------------------------------------------------+
+
+sleep 4
+
+boot
+```
 
 Then, link the node `thor` to this group:
 
@@ -866,43 +1123,107 @@ and create the link from here with a relative path.
 
 To summarize, chain will be the following: `DHCP -> {undionly.kpxe|ipxe.efi} -> boot.ipxe -> thor.ipxe (group_storage.ipxe)` .
 
-#### Kernel, initramfs and kickstart
+#### Kickstart
 
-We now need to provide nodes that boot a kernel, an initramfs, and a kickstart file.
-
-The kernel and the initramfs will load in memory a very minimal Linux operating system.
+We now need to provide a kickstart file.
 
 The kickstart file will provide auto-installation features: what should be installed, how, etc.
 We will create one kickstart file per group of nodes.
 
-Copy current kernel and initramfs into http folder:
-
-```
-cp /boot
-```
->>>>>>>>>>>>>>>>>>>>>>>
-
 To create the kickstart file, we need an ssh public key from our `odin` management
-node. Create it:
+node. Create it, without passphrase:
 
 ```
-ssh-keygen -N ""
+ssh-keygen -N "" -t Ed25519
 ```
->>>>>>>>>>>>>>>>
 
-And get the content of the public key, we will use it just bellow to generate the
-kickstart file.
+And get the content of the public key file `/root/.ssh/id_ed25519.pub`, we will use it just bellow to generate the
+kickstart file. For example, content of mine is:
 
-Now we need an sha512 password hash. Generate one using the following commande:
+```
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIqpyyh44Hz3gvhISaIE9yJ/ao8fBLNo7qwPJcYjQdIl root@odin.cluster.local
+```
 
->>>>>>>>>>>>>>>
+Now we need an sha512 password hash. Generate one using the following command:
 
-And keep it somewhere, we will use it just bellow to generate the kickstart file.
+```
+python3 -c 'import crypt,getpass; print(crypt.crypt(getpass.getpass(), crypt.mksalt(crypt.METHOD_SHA512)))'
+```
+
+And keep it somewhere (for example, `$6$7zvrwimYcypA8JWc$5GWYVF7zrI5eorsPN8IUT1n/Gmjpkic7h2cCbFVxbkqJeG0/kmJsYw6EN9oX3NQ34duwW7qAmOI13Y/0v5oHn.` is for `root` as password, which is not secure but ok for training purpose), we will use it just bellow to generate the kickstart file.
 
 Then, create the kickstart file `/var/www/html/nodes_groups/group_storage.kickstart.cfg`
 dedicated to storage group, with the following minimal content:
 
->>>>>>>>>>>>>>>>>>>>>>>
+```
+##### General settings
+
+# Do not use GUI
+text
+
+# Run the Setup Agent on first boot
+firstboot --enable
+
+# System keyboard layout
+keyboard --vckeymap=us --xlayouts=us
+
+# System language
+lang en_US.UTF-8
+
+# System timezone
+timezone Europe/Brussels --isUtc
+
+# Reboot after installation
+reboot
+
+##### Authentication settings
+
+# Root password (sha512)
+rootpw --iscrypted $6$7zvrwimYcypA8JWc$5GWYVF7zrI5eorsPN8IUT1n/Gmjpkic7h2cCbFVxbkqJeG0/kmJsYw6EN9oX3NQ34duwW7qAmOI13Y/0v5oHn.
+
+
+##### Network
+
+# Network settings
+network --bootproto=dhcp --ipv6=auto --activate
+network --hostname=localhost.localdomain
+
+##### Security
+
+# SELinux
+selinux --enforcing
+
+# Firwalld
+firewall --disabled
+
+##### Partitionning
+
+# Bootloader configuration
+bootloader --append="" --location=mbr
+
+# Partitioning
+clearpart --all --initlabel
+autopart --type=plain --fstype=ext4 --nohome
+
+##### Packages
+
+%packages
+@core
+%end
+
+# Main post, ssh keys
+%post --interpreter /bin/bash --log /root/main_post-install.log
+
+# Add ssh keys from ssh_keys list
+mkdir /root/.ssh
+cat << xxEOFxx >> /root/.ssh/authorized_keys
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIqpyyh44Hz3gvhISaIE9yJ/ao8fBLNo7qwPJcYjQdIl root@odin.cluster.local
+xxEOFxx
+# Ensure SELinux configuration is ok
+restorecon -R -v /root/.ssh
+
+%end
+```
 
 Notes:
 
@@ -947,9 +1268,15 @@ over disk, and ensure operating system is booted before proceeding.
 
 Repeat this operation to deploy each nodes of your cluster.
 
+Note: if you let nodes boot over PXE after reboot, they will again deploy, and enter in an infinite deployment loop.
+There are strategy to solve that automatically, but this is out of the scope of this training. For now, simply change boot order after os deployment.
+
+
 ### Configure client side
 
 Now that other nodes are deployed and reachable over ssh, it is time to configure client side on them.
+
+We will use clustershell (clush) a lot, as it allows to manipulate a lot of hosts over ssh at the same time.
 
 #### Set hostname
 
@@ -1004,16 +1331,26 @@ dnf update
 dnf install wget -y
 ```
 
+A simpler way can be also to copy `odin` repositories files directly on clients, and do all in parallel using clush.
+Lets redo it, this time faster:
+
+```
+clush -bw thor,heimdall,valkyrie[01-02] 'cp -a /etc/yum.repos.d/ /root/yum.repos.d.backup'
+clush -bw thor,heimdall,valkyrie[01-02] 'rm -f /etc/yum.repos.d/*.repo'
+clush -w thor,heimdall,valkyrie[01-02] --copy /etc/yum.repos.d/* --dest /etc/yum.repos.d/
+clush -bw thor,heimdall,valkyrie[01-02] 'dnf clean all'
+clush -bw thor,heimdall,valkyrie[01-02] 'dnf update -y'
+clush -bw thor,heimdall,valkyrie[01-02] 'dnf install wget -y'
+```
+
 #### DNS client
 
-On each client node, set `odin` as default DNS server, by updating `/etc/resolv.conf` file with the following content:
+IF not already automatically done from DHCP, on each client node, set `odin` as default DNS server, by updating `/etc/resolv.conf` file with the following content:
 
 ```
 search cluster.local
 nameserver 10.10.0.1
 ```
-
-You can also simply upload the file from `odin` on clients, using scp.
 
 #### Hosts file
 
@@ -1030,7 +1367,7 @@ On each client, edit `/etc/hosts` file and have it match the following:
 10.10.3.2   valkyrie02
 ```
 
-You can also simply upload the file from `odin` on clients, using scp.
+You can also simply upload the file from `odin` on clients, using clush.
 
 #### Time client
 
@@ -1062,12 +1399,48 @@ rtcsync
 logdir /var/log/chrony
 ```
 
+Ensure client can communicate with the server.
+
+Stop service:
+
+```
+systemctl stop chronyd
+```
+
+And force a clock sync:
+
+```
+chronyd -q 'server 10.10.0.1 iburst'
+```
+
+If you get the following (or something close) then your clock can sync from server:
+
+```
+chronyd version 3.5 starting (+CMDMON +NTP +REFCLOCK +RTC +PRIVDROP +SCFILTER +SIGND +ASYNCDNS +SECHASH +IPV6 +DEBUG)
+Initial frequency 12.820 ppm
+System clock wrong by 0.000050 seconds (step)
+chronyd exiting
+```
+
+However, if you get something similar to this:
+
+```
+chronyd version 3.5 starting (+CMDMON +NTP +REFCLOCK +RTC +PRIVDROP +SCFILTER +SIGND +ASYNCDNS +SECHASH +IPV6 +DEBUG)
+Initial frequency 12.820 ppm
+No suitable source for synchronisation
+chronyd exiting
+```
+
+It means something went wrong (firewall ?).
+
 Then start and enable service:
 
 ```
 systemctl start chronyd
 systemctl enable chronyd
 ```
+
+Again, you can use clush to do all these tasks in parallel on all client nodes.
 
 Our nodes are now configured with the very basic needs. Time to focus on storage.
 
@@ -1147,6 +1520,8 @@ blocking the system at boot if these folder are not reachable (for example if `t
 Now ask for mount of them:
 
 ```
+mkdir /software
+mkdir /home
 mount /home
 mount /software
 ```
@@ -1163,7 +1538,37 @@ Let's install now the cluster job scheduler, Slurm.
 First, we need to build packages. Grab Munge and Slurm sources.
 Munge will be used to handle authentication between Slurm daemons.
 
->>>>>>>>>>>>>>>>>
+Note: beware, links may change over time, especially Slurm from Schemd. You may need to update it.
+
+```
+wget https://github.com/dun/munge/releases/download/munge-0.5.14/munge-0.5.14.tar.xz
+dnf install bzip2-devel openssl-devel zlib-devel -y
+wget https://github.com/dun.gpg
+wget https://github.com/dun/munge/releases/download/munge-0.5.14/munge-0.5.14.tar.xz.asc
+rpmbuild -ta munge-0.5.14.tar.xz
+```
+
+Now install munge, as it is needed to build slurm:
+
+```
+cp /root/rpmbuild/RPMS/x86_64/munge-* /var/www/html/repositories/centos/8/x86_64/extra/
+createrepo /var/www/html/repositories/centos/8/x86_64/extra/
+dnf clean all
+dnf install munge munge-libs munge-devel
+```
+
+Now build slurm packages:
+
+```
+wget https://download.schedmd.com/slurm/slurm-20.11.7.tar.bz2
+dnf install munge munge-libs munge-devel
+dnf install pam-devel readline-devel perl-ExtUtils-MakeMaker
+dnf install mariadb mariadb-devel
+rpmbuild -ta slurm-20.11.7.tar.bz2
+cp /root/rpmbuild/RPMS/x86_64/slurm* /var/www/html/repositories/centos/8/x86_64/extra/
+createrepo /var/www/html/repositories/centos/8/x86_64/extra/
+dnf clean all
+```
 
 Slurm controller side is called slurmctld while on compute nodes, it is called slurmd .
 On the "submitter" node, no daemon except munge is required.
@@ -1179,13 +1584,14 @@ Tip: if anything goes wrong with slurm, proceed as following:
 Install munge needed packages:
 
 ```
-dnf install munge....
+dnf install munge munge-libs
 ```
 
 And generate a munge key:
 
 ```
 mungekey -c -f -k /etc/munge/munge.key
+chown munge:munge /etc/munge/munge.key
 ```
 
 We will spread this key over all servers of the cluster.
@@ -1200,7 +1606,14 @@ systemctl enable munge
 Now install slurm controller `slurmctld` packages:
 
 ```
-dnf install slurm....
+dnf install slurm slurm-slurmctld -y
+groupadd -g 567 slurm
+useradd  -m -c "Slurm workload manager" -d /etc/slurm -u 567 -g slurm -s /bin/false slurm
+mkdir /etc/slurm
+mkdir /var/log/slurm
+mkdir -p /var/spool/slurmd/StateSave
+chown -R slurm:slurm /var/log/slurm
+chown -R slurm:slurm /var/spool/slurmd
 ```
 
 Lets create a very minimal slurm configuration.
@@ -1219,6 +1632,12 @@ ControlMachine=odin
 SlurmUser=slurm
 AuthType=auth/munge
 CryptoType=crypto/munge
+
+## Files path
+StateSaveLocation=/var/spool/slurmd/StateSave
+SlurmdSpoolDir=/var/spool/slurmd/slurmd
+SlurmctldPidFile=/var/run/slurmctld.pid
+SlurmdPidFile=/var/run/slurmd.pid
 
 ## Logging
 SlurmctldDebug=5
@@ -1263,43 +1682,66 @@ Using `sinfo` command, you should now see the cluster start, with both computes 
 On both `valkyrie01,valkyrie02` nodes, install munge the same way than on controller.
 
 ```
-dnf install munge....
+clush -bw valkyrie01,valkyrie02 dnf install munge -y
 ```
 
 Ensure munge key generated on controller node is spread on each client. From `odin`, scp the file:
 
 ```
-scp /etc/munge/munge.key valkyrie01:/etc/munge/munge.key
-scp /etc/munge/munge.key valkyrie02:/etc/munge/munge.key
+clush -w valkyrie01,valkyrie02 --copy /etc/munge/munge.key --dest /etc/munge/munge.key
+clush -bw valkyrie01,valkyrie02 chown munge:munge /etc/munge/munge.key
 ```
 
 And start munge on each compute node:
 
 ```
-systemctl start munge
-systemctl enable munge
+clush -bw valkyrie01,valkyrie02 systemctl start munge
+clush -bw valkyrie01,valkyrie02 systemctl enable munge
 ```
 
 Now on each compute node, install slurmd needed packages:
 
 ```
-dnf install slurm....
+clush -bw valkyrie01,valkyrie02 dnf install slurm slurm-slurmd -y
 ```
 
 Now again, spread same slurm configuration files from `odin` to each compute nodes:
 
 ```
-scp /etc/slurm/slurm.conf valkyrie01:/etc/slurm/slurm.conf
-scp /etc/slurm/cgroup.conf valkyrie01:/etc/slurm/cgroup.conf
-scp /etc/slurm/slurm.conf valkyrie02:/etc/slurm/slurm.conf
-scp /etc/slurm/cgroup.conf valkyrie02:/etc/slurm/cgroup.conf
+clush -bw valkyrie01,valkyrie02 groupadd -g 567 slurm
+clush -bw valkyrie01,valkyrie02 'useradd  -m -c "Slurm workload manager" -d /etc/slurm -u 567 -g slurm -s /bin/false slurm'
+clush -bw valkyrie01,valkyrie02 mkdir /etc/slurm
+clush -bw valkyrie01,valkyrie02 mkdir /var/log/slurm
+clush -bw valkyrie01,valkyrie02 mkdir -p /var/spool/slurmd/slurmd
+clush -bw valkyrie01,valkyrie02 chown -R slurm:slurm /var/log/slurm
+clush -bw valkyrie01,valkyrie02 chown -R slurm:slurm /var/spool/slurmd
+clush -w valkyrie01,valkyrie02 --copy /etc/slurm/slurm.conf --dest /etc/slurm/slurm.conf
+clush -w valkyrie01,valkyrie02 --copy /etc/slurm/cgroup.conf --dest /etc/slurm/cgroup.conf
 ```
 
 And start on each compute node slurmd service:
 
 ```
-systemctl start slurmd
-systemctl enable slurmd
+clush -bw valkyrie01,valkyrie02 systemctl start slurmd
+clush -bw valkyrie01,valkyrie02 systemctl enable slurmd
+```
+
+And simply test cluster works:
+
+```
+scontrol update nodename=valkyrie01,valkyrie02 state=idle
+```
+
+Now, sinfo shows that one node is idle, and srun allows to launch a basic job:
+
+```
+[root@odin ~]# sinfo
+PARTITION AVAIL  TIMELIMIT  NODES  STATE NODELIST
+all*         up   infinite      1   unk* valkyrie02
+all*         up   infinite      1   idle valkyrie01
+[root@odin ~]# srun -N 1 hostname
+valkyrie01.cluster.local
+[root@odin ~]#
 ```
 
 ### Submitter
@@ -1312,7 +1754,7 @@ A slurm submitter only need configuration files, and an active munge.
 Install munge the same way than on controller.
 
 ```
-dnf install munge....
+dnf install munge
 ```
 
 Ensure munge key generated on controller node is spread here:
@@ -1331,7 +1773,7 @@ systemctl enable munge
 No install minimal slurm packages:
 
 ```
-dnf install slurm....
+dnf install slurm
 ```
 
 Now again, spread same slurm configuration files from `odin` to `heimdall`:
@@ -1562,6 +2004,9 @@ adduser myuser --shell /bin/bash -d /home/myuser -u 2001 -g 2001
 Note: for each new user, increment the user number (2002 -> 2003 -> 2004 -> etc.).
 Also, use number above 2000 to avoid issues or conflict with possible system ids.
 
+It is important to understand that using manual methods to add users may seems simple, but has a major drawback: the cluster can quickly become out of synchronization regarding users.
+To prevent that, you can create scripts, rely on automation tools like Ansible, or use a centralized users database (OpenLDAP, etc.).
+
 ## Infiniband
 
 If you need InfiniBand support on nodes, simply install the package group related:
@@ -1593,3 +2038,5 @@ Additional task could be done:
 
 You can also rely on an opensource Stack that provides all of this.
 Of course, I will recommended BlueBanquise (https://github/bluebanquise/bluebanquise) but many other stacks exist.
+
+Thank you for following this tutorial. If you find something is missing, or find an issue, please notify me :-)
