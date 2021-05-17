@@ -80,7 +80,7 @@ Few words on vocabulary used:
   * A pet node is a key node, that you MUST keep healthy and that is considered difficult to reinstall.
   * A cattle node, is a "trashable" node, that you consider non vital to production and that is considered easy to reinstall.
 
->>>>>>>>>>>>>>>>>>>>>>>>
+![Pets and cattle](resources/hpc-meta.jpg)
 
 (Original black and white image from Roger Rössing, otothek_df_roe-neg_0006125_016_Sch%C3%A4fer_vor_seiner_Schafherde_auf_einer_Wiese_im_Harz.jpg)
 
@@ -104,8 +104,6 @@ Most of the time, a cluster is composed of:
 
 A node is the name given to a server inside an HPC cluster. Nodes are most of the time equipped with a **BMC**
 for Baseboard Management Controller, which is kind of a small server connected on the server motherboard and allow manipulating the server remotely (power on, power off, boot order, status, console, etc.).
-
->>>>>>>>>>>>>>>>>>
 
 Sometime, servers are **racked** into a **chassis** that can embed an **CMC** for Chassis Management Controller. Servers and chassis can even be
 **racked** into a rack that can embed an **RMC** for Rack Management Controller.
@@ -145,7 +143,7 @@ In return, after user has submitted a job, the job scheduler will provide user a
 
 The cluster structure for this training will be as follows:
 
->>>>>>>>>>>>>>>>>>>>>>>>
+![Pets and cattle](resources/cluster_schema.svg)
 
 On the hardware side:
 
@@ -174,8 +172,7 @@ already been taken by Virtualbox NAT. In this case, use another subnet.
 ### Final notes before we start
 
 All nodes will be installed with a minimal install Centos 8. Needed other rpms
-are provided at <>>>>>>>>>>>>>>>>> or if you are doing this training with me, these
-files are already in the /root directory of your VMs.
+will be created on the fly from sources.
 
 * To simplify this tutorial, firewall will be deactivated. You can reactivate it later.
 * We will keep SELinux enforced. When facing permission denied, try setting SELinux into permissive mode to check if that's the reason, or check selinux logs.
@@ -204,17 +201,19 @@ systemctl stop firewalld
 
 Change hostname to `odin` (need to login again to see changes):
 
-`hostnamectl set-hostname odin.cluster.local`
+```
+hostnamectl set-hostname odin.cluster.local
+```
 
 To start most services, we need the main NIC to be up and ready with an ip.
 We will use **NetworkManager** to handle network. `nmcli` is the command to interact with NetworkManager.
 
-Assuming main NIC name is `enp0s3`, to set `10.10.0.1/16` IP and subnet on it, use the following commands:
+Assuming main NIC name is `enp0s8`, to set `10.10.0.1/16` IP and subnet on it, use the following commands:
 
 ```
-nmcli con mod enp0s3 ipv4.addresses 10.10.0.1/16
-nmcli con mod enp0s3 ipv4.method manual
-nmcli con up enp0s3
+nmcli con mod enp0s8 ipv4.addresses 10.10.0.1/16
+nmcli con mod enp0s8 ipv4.method manual
+nmcli con up enp0s8
 ```
 
 Then ensure interface is up with correct ip using:
@@ -223,7 +222,7 @@ Then ensure interface is up with correct ip using:
 ip a
 ```
 
-You should see your NICs with `enp0s3` having ip `10.10.0.1` with `/16` prefix.
+You should see your NICs with `enp0s8` having ip `10.10.0.1` with `/16` prefix.
 
 Time to setup basic repositories.
 
@@ -328,14 +327,18 @@ restorecon -r /var/www/html/
 
 Grab the packages from the web using wget:
 
->>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+```
+wget https://fr2.rpmfind.net/linux/epel/8/Everything/x86_64/Packages/c/clustershell-1.8.3-2.el8.noarch.rpm -P /var/www/html/repositories/centos/8/x86_64/extra/
+wget https://fr2.rpmfind.net/linux/epel/8/Everything/x86_64/Packages/p/python3-clustershell-1.8.3-2.el8.noarch.rpm -P /var/www/html/repositories/centos/8/x86_64/extra/
+```
 
-Copy them into the `/var/www/html/repositories/centos/8/x86_64/extra/` folder, and then create a new repository here using the dedicated command.
+We now need to create a new repository here using the dedicated command.
 We must install this command first:
 
 ```
 dnf install -y createrepo
 createrepo /var/www/html/repositories/centos/8/x86_64/extra/
+restorecon -r /var/www/html/
 ```
 
 Then create dedicated repository file `/etc/yum.repos.d/extra.repo` with the following content:
@@ -383,16 +386,6 @@ Unknown nodes/BMC will be given a temporary ip on the 10.0.254.x range if dhcp s
 ```
  authoritative;
 
- subnet 10.10.0.0 netmask 255.255.0.0 {
- range 10.10.254.0 10.10.254.254; # range where unknown servers will be
- option domain-name "cluster.local";
- option domain-name-servers 10.10.0.1; # dns server ip
- option broadcast-address 10.10.255.255;
- default-lease-time 600;
- max-lease-time 7200;
-
- next-server 10.10.0.1; #  pxe server ip
-
  option client-arch code 93 = unsigned integer 16;
  if exists client-arch {
    if option client-arch = 00:00 {
@@ -405,6 +398,16 @@ Unknown nodes/BMC will be given a temporary ip on the 10.0.254.x range if dhcp s
      filename "ipxe.efi";
    }
  }
+
+ subnet 10.10.0.0 netmask 255.255.0.0 {
+ range 10.10.254.0 10.10.254.254; # range where unknown servers will be
+ option domain-name "cluster.local";
+ option domain-name-servers 10.10.0.1; # dns server ip
+ option broadcast-address 10.10.255.255;
+ default-lease-time 600;
+ max-lease-time 7200;
+
+ next-server 10.10.0.1; #  pxe server ip
 
 # List of nodes
 
@@ -547,7 +550,7 @@ valkyrie01         IN  A   10.10.3.1
 valkyrie02         IN  A   10.10.3.2
 ```
 
-Second one is /var/named/reverse:
+Second one is `/var/named/reverse`:
 
 ```
 $TTL 86400
@@ -588,15 +591,27 @@ systemctl start named
 ```
 
 The server is up and running. We need to setup client part, even on out `odin`
-management node. To do so, edit `/etc/resolv.conf` as following:
+management node. To do so, edit `/etc/resolv.conf` and add the following (but keep your primary dns after the one of the cluster to be able to resolv other hosts over the web):
 
 ```
 search cluster.local
 nameserver 10.10.0.1
 ```
 
+So for example, my final file at home is:
+
+```
+nameserver 10.10.0.1
+search home cluster.local
+nameserver 192.168.1.1
+nameserver 2a01:cb08:8acc:b600:a63e:51ff:fe14:f413
+nameserver fe80::a63e:51ff:fe14:f413%enp0s3
+```
+
+Which allows me to resolv `thor` or `google.com`.
+
 Note: you may wish to prevent other scripts (dhclient for example) to edit the file.
-If using an ext4 filesystem, it is possble to lock the file using:
+If using an ext4 filesystem, it is possible to lock the file using:
 
 ```
 chattr +i /etc/resolv.conf
@@ -670,7 +685,7 @@ logdir /var/log/chrony
 Then start and enable service:
 
 ```
-systemctl start chronyd
+systemctl restart chronyd
 systemctl enable chornyd
 ```
 
@@ -683,6 +698,19 @@ It is now time to setup the PXE stack, which is composed of the dhcp server, the
 The http server will distribute the minimal kernel and initramfs for remote Linux booting, the kickstart autoinstall file for remote hosts to know how they should be installed, and the repositories for packages distribution. Some very basic files will be provided using tftp as this is the most compatible PXE protocol.
 
 #### iPXE rom
+
+We first need a TFTP server. We will create one based on the Facebook Tftp server.
+
+```
+mkdir fbtftp-0.4
+cd fbtftp-0.4
+dnf install git tar rpm-build
+git clone https://github.com/facebook/fbtftp.git .
+python3 setup.py bdist_rpm --spec-only
+cd ../
+tar cvzf fbtftp-0.4.tar.gz fbtftp-0.4
+rpmbuild -ta fbtftp-0.4.tar.gz
+```
 
 Install needed packages packages (http server is already installed):
 
@@ -1078,7 +1106,7 @@ Edit `/etc/exports` file, and add the 2 exported folders with good parameters:
 /software 10.10.0.0/16(ro,no_root_squash,sync)
 ```
 
-Simply put, we ask here nfs-server to export both directories, restricted only to the 
+Simply put, we ask here nfs-server to export both directories, restricted only to the
 10.10.0.0/16 subnet. Note that one is `rw` (read/write), the other is `ro` (read only).
 
 Start now the nfs-server:
@@ -1113,7 +1141,7 @@ thor:/home /home nfs rw,rsize=32768,wsize=32768,intr,nfsvers=4,bg 0 0
 thor:/software /software nfs ro,intr,nfsvers=4,bg 0 0
 ```
 
-Note: bg parameter ensure that the mounts are done in background mode. This avoid 
+Note: bg parameter ensure that the mounts are done in background mode. This avoid
 blocking the system at boot if these folder are not reachable (for example if `thor` server is down at this very moment).
 
 Now ask for mount of them:
@@ -1332,7 +1360,7 @@ A calculation node is composed of multiple calculation cores. When asking for re
 * Etc.
 
 `-N`, `-n` and `--ntasks-per-node` are complementary, and only two of them should be used at a time (slurm will deduce the last one using number of cores available on compute nodes as written in the slurm configuration file).
-`-N` specifies the total number of nodes to allocate to the job, `-n` the total number of processes to start, and `--ntasks-per-node` the number of processes to launch per node. 
+`-N` specifies the total number of nodes to allocate to the job, `-n` the total number of processes to start, and `--ntasks-per-node` the number of processes to launch per node.
 
 ```
 n=N*ntasks-per-node
@@ -1378,7 +1406,7 @@ A very basic script is:
 #SBATCH -p all                                                                        
 #SBATCH --exclusive                                                                            
 #SBATCH -t 00:10:00                                                                            
- 
+
 echo "###"                                                                                     
 date                                                                                           
 echo "###"                                                                                     
@@ -1533,6 +1561,23 @@ adduser myuser --shell /bin/bash -d /home/myuser -u 2001 -g 2001
 
 Note: for each new user, increment the user number (2002 -> 2003 -> 2004 -> etc.).
 Also, use number above 2000 to avoid issues or conflict with possible system ids.
+
+## Infiniband
+
+If you need InfiniBand support on nodes, simply install the package group related:
+
+```
+dnf groupinstall 'infiniband support'
+```
+
+And then enable rdma service:
+
+```
+systemctl start rdma
+systemctl enable rdma
+```
+
+You should now see the ib0 interface in the NIC list from `ip a`.
 
 ## Conclusion
 
