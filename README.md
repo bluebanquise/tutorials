@@ -52,14 +52,6 @@
 
 This tutorial tries to teach how to install manually a basic HPC cluster.
 
-First part will be dedicated to core installation, i.e. the bare minimum.
-
-Second part will be dedicated to automate this installation using Ansible, and
-an opensource Stack, BlueBanquise.
-
-Third and last part will be dedicated to users environment and cluster day to day
-management.
-
 This tutorial will focus on simplicity, lightness and security.
 All software used are very common and when facing an error, a quick look on the
 web will most of the time solves the issue.
@@ -2086,7 +2078,9 @@ Additional task could be done:
 * Enabling Slurm accounting
 * Etc.
 
+If you wish to learn Ansible, to automate all of this, I made another tutorial for that here: http://bluebanquise.com/documentation/learn_ansible.html
+
 You can also rely on an opensource Stack that provides all of this.
-Of course, I will recommended BlueBanquise (https://github/bluebanquise/bluebanquise) but many other stacks exist.
+Of course, I will recommended BlueBanquise, https://github/bluebanquise/bluebanquise, but many other stacks exist.
 
 Thank you for following this tutorial. If you find something is missing, or find an issue, please notify me :-)
