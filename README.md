@@ -283,7 +283,9 @@ The local repository allows the main server and other servers to install automat
 
 Next step depends if you are using a Virtual Machine or a real server.
 
-If you are using a real server, upload the Centos DVD in /root folder and mount it in /mnt (or mount it directly from CDROM):
+3 ways to do:
+
+1. If you are using a real server, upload the Centos DVD in /root folder and mount it in /mnt (or mount it directly from CDROM):
 
 ```
 mount /root/CentOS-8-x86_64-Everything.iso /mnt
@@ -297,7 +299,15 @@ cp -a /mnt/* /var/www/html/repositories/centos/8/x86_64/os/
 restorecon -r /var/www/html/
 ```
 
-If you are using a Virtual Machine, simply create the folder and mount the ISO that you should have added into the virtual CDROM drive:
+2. Or you can also simply mount the iso directly in the good folder:
+
+```
+mkdir -p /var/www/html/repositories/centos/8/x86_64/os/
+mount /root/CentOS-8-x86_64-Everything.iso /var/www/html/repositories/centos/8/x86_64/os/
+restorecon -r /var/www/html/
+```
+
+3. If you are using a Virtual Machine, simply create the folder and mount the ISO that you should have added into the virtual CDROM drive:
 
 ```
 mkdir -p /var/www/html/repositories/centos/8/x86_64/os/
