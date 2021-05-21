@@ -1761,6 +1761,7 @@ clush -bw valkyrie01,valkyrie02 systemctl enable munge
 Now on each compute node, install slurmd needed packages:
 
 ```
+clush -bw valkyrie01,valkyrie02 dnf clean all
 clush -bw valkyrie01,valkyrie02 dnf install slurm slurm-slurmd -y
 ```
 
