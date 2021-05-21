@@ -457,7 +457,7 @@ Unknown nodes/BMC will be given a temporary ip on the 10.0.254.x range if dhcp s
  }
 
  subnet 10.10.0.0 netmask 255.255.0.0 {
- range 10.10.254.0 10.10.254.254; # range where unknown servers will be
+ # range 10.10.254.0 10.10.254.254; # range where unknown servers will be
  option domain-name "cluster.local";
  option domain-name-servers 10.10.0.1; # dns server ip
  option broadcast-address 10.10.255.255;
