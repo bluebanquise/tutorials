@@ -497,12 +497,12 @@ host valkyrie02 {
 
 Finally, start and enable the dhcp service:
 
-WARNING ! DO NOT DO THAT FOR THE WORKSHOP
+WARNING: only enable the DHCP service if you are on an isolated network, as in opposite to the other services, it may disturb the network if another DHCP is on this network.
+
 ```
 systemctl enable dhcpd
 systemctl start dhcpd
 ```
-WARNING ! DO NOT DO THAT FOR THE WORKSHOP
 
 Note: if needed, you can search for nodes in `10.10.254.0-10.10.254.254` range using the following `nmap` command (install it using `dnf install nmap`):
 
