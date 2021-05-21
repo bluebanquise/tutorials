@@ -2001,7 +2001,7 @@ echo "############### "
 
 Note that it is assumed here that a node has 24 cores.
 
-####MPI job
+#### MPI job
 
 To submit an MPI job, assuming the code was parallelized with MPI and compile with MPI, use (note the `srun`, replacing the `mpirun`):
 
