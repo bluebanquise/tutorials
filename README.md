@@ -2076,6 +2076,137 @@ systemctl enable rdma
 
 You should now see the ib0 interface in the NIC list from `ip a`.
 
+## GPU (Nvidia)
+
+To setup an GPU, you need to:
+
+* Ensure kernel do not crash at start (happen often if kernel is too old for hardware)
+* Ensure **nouveau** driver do not prevent Nvidia driver to load
+* Ensure Nvidia driver load
+
+You can then install CUDA build and runtime environment on a shared space, or on each nodes, as you wish.
+
+Lets do that step by step.
+
+### Ensure kernel do not crash
+
+To prevent kernel from crashing at boot (Kernel Panic) due to too recent GPU hardware, edit the ipxe file that contains the kernel line 
+(for example file `/var/www/html/nodes_groups/group_compute_gpu.ipxe` and append `nomodeset` to the kernel line. For example:
+
+```
+#!ipxe
+
+echo Booting OS
+echo Group profile: compute_gpu
+
+echo +----------------------------------------------------+
+echo |
+echo | Loading kernel
+
+kernel http://${next-server}/repositories/centos/8/x86_64/os/images/pxeboot/vmlinuz initrd=initrd.img inst.stage2=http://${next-server}/repositories/centos/8/x86_64/os/ inst.repo=http://${next-server}/repositories/centos/8/x86_64/os/BaseOS/ ks=http://${next-server}/nodes_groups/group_compute_gpu.kickstart.cfg nomodeset
+
+echo | Loading initial ramdisk ...
+
+initrd http://${next-server}/repositories/centos/8/x86_64/os/images/pxeboot/initrd.img
+
+echo | ALL DONE! We are ready.
+echo | Downloaded images report:
+
+imgstat
+
+echo | Booting in 4s ...
+echo |
+echo +----------------------------------------------------+
+
+sleep 4
+
+boot
+```
+
+Also, edit kickstart file, for example here file `/var/www/html/nodes_groups/group_compute_gpu.kickstart.cfg`, and ensure the same is added to the bootloader parameter.
+So for example, in the kickstart file, ensure you have this line:
+
+```
+bootloader --append="nomodeset" --location=mbr
+```
+
+Node should not crash anymore.
+
+### Disable nouveau driver
+
+Again, redo the same process than before, but add another kernel parameter: `modprobe.blacklist=nouveau nouveau.modeset=0 rd.driver.blacklist=nouveau`
+
+So edit ipxe `/var/www/html/nodes_groups/group_compute_gpu.ipxe` file again:
+
+```
+#!ipxe
+
+echo Booting OS
+echo Group profile: compute_gpu
+
+echo +----------------------------------------------------+
+echo |
+echo | Loading kernel
+
+kernel http://${next-server}/repositories/centos/8/x86_64/os/images/pxeboot/vmlinuz initrd=initrd.img inst.stage2=http://${next-server}/repositories/centos/8/x86_64/os/ inst.repo=http://${next-server}/repositories/centos/8/x86_64/os/BaseOS/ ks=http://${next-server}/nodes_groups/group_compute_gpu.kickstart.cfg nomodeset modprobe.blacklist=nouveau nouveau.modeset=0 rd.driver.blacklist=nouveau
+
+echo | Loading initial ramdisk ...
+
+initrd http://${next-server}/repositories/centos/8/x86_64/os/images/pxeboot/initrd.img
+
+echo | ALL DONE! We are ready.
+echo | Downloaded images report:
+
+imgstat
+
+echo | Booting in 4s ...
+echo |
+echo +----------------------------------------------------+
+
+sleep 4
+
+boot
+```
+
+And edit `/var/www/html/nodes_groups/group_compute_gpu.kickstart.cfg` file again:
+
+```
+bootloader --append="nomodeset modprobe.blacklist=nouveau nouveau.modeset=0 rd.driver.blacklist=nouveau" --location=mbr
+```
+
+Now, node will boot without `nouveau` driver loaded.
+
+### Install Nvidia driver
+
+Grab driver from Nvidia website, that match your hardware and Linux distribution (and arch).
+
+Now install epel repository:
+
+```
+dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm
+```
+
+Now install Nvidia repository:
+
+```
+ARCH=$( /bin/arch )
+distribution=$(. /etc/os-release;echo $ID`rpm -E "%{?rhel}%{?fedora}"`)
+dnf config-manager --add-repo http://developer.download.nvidia.com/compute/cuda/repos/$distribution/${ARCH}/cuda-rhel8.repo
+```
+
+Install needed kernel headers:
+
+```
+dnf install -y kernel-devel-$(uname -r) kernel-headers-$(uname -r)
+```
+
+And install driver
+
+```
+dnf clean all
+dnf -y module install nvidia-driver:latest-dkms
+```
+
 ## Conclusion
 
 The cluster is ready to be used.
