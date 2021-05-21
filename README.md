@@ -46,8 +46,13 @@
       - [Basic job script](#basic-job-script)
       - [Serial job](#serial-job)
       - [OpenMP job](#openmp-job)
+      - [MPI job](#mpi-job)
   * [Users](#users)
   * [Infiniband](#infiniband)
+  * [GPU (Nvidia)](#gpu--nvidia-)
+    + [Ensure kernel do not crash](#ensure-kernel-do-not-crash)
+    + [Disable nouveau driver](#disable-nouveau-driver)
+    + [Install Nvidia driver](#install-nvidia-driver)
   * [Conclusion](#conclusion)
 
 This tutorial tries to teach how to install manually a basic HPC cluster.
