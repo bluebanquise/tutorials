@@ -745,7 +745,7 @@ Then start and enable service:
 
 ```
 systemctl restart chronyd
-systemctl enable chornyd
+systemctl enable chronyd
 ```
 
 ### PXE stack
