@@ -47,6 +47,7 @@
       - [Serial job](#serial-job)
       - [OpenMP job](#openmp-job)
       - [MPI job](#mpi-job)
+      - [Real life example: Blender job](#blender-job)
   * [Users](#users)
   * [Infiniband](#infiniband)
   * [GPU (Nvidia)](#gpu--nvidia-)
