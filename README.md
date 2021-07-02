@@ -1868,6 +1868,15 @@ A calculation node is composed of multiple calculation cores. When asking for re
 n=N*ntasks-per-node
 ```
 
+Here, we will see the following submittion ways:
+
+1. Submitting without a script
+2. Submitting a basic job script
+3. Submitting a serial job script
+4. Submitting an OpenMP job script
+5. Submitting an MPI job script
+6. A real life example with submitting a 3D animation render on a cluster combining Blender and Slurm arrays.
+
 #### Submitting without a script
 
 It is possible to launch a very simple job without a script, using the `srun` command. To do that, use `srun` directly, specifying the number of nodes required. For example:
@@ -2035,6 +2044,87 @@ echo "############### "
 ```
 
 `srun` will act as `mpirun`, but providing automatically all already tuned arguments for the cluster.
+
+#### Real life example: Blender job
+
+Blender animations/movies are render using CPU and GPU. In this tutorial, we will focus on CPU since we do not have GPU (or if you have, lucky you).
+
+We will render an animation of 40 frames.
+
+We would create a simple job, asking Blender to render this animation. But Blender will then use a single compute node. We have a cluster at disposal, lets take advantage of that.
+
+We will use Slurm job arrays (so an array of jobs) to split these 40 frames into chuck of 5 frames. Each chuck will be a unique job. Using this method, we will use all available computes nodes of our small cluster.
+
+Note that 5 is an arbitrary number, and this depend of how difficult to render each frame is. If a unique frame takes 10 minutes to render, then you can create chink of 1 frame. If on the other hand each frame takes 10s to render, it is better to group them by chunk as Blender as a "starting time" for each new chunk.
+
+First download Blender and the demo:
+
+```
+wget https://download.blender.org/demo/geometry-nodes/candy_bounce_geometry-nodes_demo.blend
+wget https://ftp.nluug.nl/pub/graphics/blender/release/Blender2.93/blender-2.93.1-linux-x64.tar.xz
+```
+
+Extract Blender into `/software` and copy demo file into `/home`:
+
+```
+cp candy_bounce_geometry-nodes_demo.blend /home
+tar xJvf blender-2.93.1-linux-x64.tar.xz -C /software
+```
+
+Now lets create the job file. Create file `/home/blender_job.job` with the following content:
+
+```
+#!/bin/bash
+#SBATCH -J myjob
+#SBATCH -o myjob.out.%j
+#SBATCH -e myjob.err.%j
+#SBATCH -N 1
+#SBATCH --ntasks-per-node=1
+#SBATCH --exclusive
+#SBATCH -t 01:00:00
+
+set -x
+
+# We set chunk size to 5 frames
+chunk_size=5
+
+# We calculate frames span for each job depending of ARRAY_TASK_ID
+range_min=$(((SLURM_ARRAY_TASK_ID-1)*chunk_size+1))
+range_max=$(((SLURM_ARRAY_TASK_ID)*chunk_size))
+
+# We include blender binary into our PATH
+export PATH=/software/blender-2.93.1-linux-x64/:$PATH
+
+# We start the render
+# -b is the input blender file
+# -o is the output target folder, with files format
+# -F is the output format
+# -f specify the range
+# -noaudio is self explaining
+# IMPORTANT: Blender arguments must be given in that specific order.
+
+eval blender -b /home/candy_bounce_geometry-nodes_demo.blend -o /home/frame##### -F PNG -f $range_min..$range_max -noaudio
+
+# Note: if you have issues with default engine, try using CYCLES. Slower.
+# eval blender -b /home/candy_bounce_geometry-nodes_demo.blend -E CYCLES -o /home/frame##### -F PNG -f $range_min..$range_max -noaudio
+
+```
+
+This job file will be executed for each job.
+Since we have 40 frames to render, and we create 5 frames chunk, this means we need to ask Slurm to create a job array of `40/5=8` jobs.
+
+Launch the array of jobs:
+
+```
+sbatch --array=1-8 /home/blender_job.job
+```
+
+If all goes well, using `squeue` command, you should be able to see the jobs currently running, and the ones currently pending for resources.
+
+You can follow jobs by watching their job file (refreshed by Slurm regularly).
+And after few seconds/minutes depending of your hardware, you should see first animation frames as PNG images in /home folder.
+
+This example shows how to use Slurm to create a Blender render farm.
 
 ## Users
 
