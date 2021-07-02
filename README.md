@@ -47,7 +47,7 @@
       - [Serial job](#serial-job)
       - [OpenMP job](#openmp-job)
       - [MPI job](#mpi-job)
-      - [Real life example: Blender job](#blender-job)
+      - [Real life example with Blender job](#real-life-example-with-blender-job)
   * [Users](#users)
   * [Infiniband](#infiniband)
   * [GPU (Nvidia)](#gpu--nvidia-)
@@ -2046,7 +2046,7 @@ echo "############### "
 
 `srun` will act as `mpirun`, but providing automatically all already tuned arguments for the cluster.
 
-#### Real life example: Blender job
+#### Real life example with Blender job
 
 Blender animations/movies are render using CPU and GPU. In this tutorial, we will focus on CPU since we do not have GPU (or if you have, lucky you).
 
