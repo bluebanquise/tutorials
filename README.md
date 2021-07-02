@@ -2321,6 +2321,7 @@ Additional task could be done:
 * Etc.
 
 If you wish to learn Ansible, to automate all of this, I made another tutorial for that here: http://bluebanquise.com/documentation/learn_ansible.html
+Just keep in mind that hostnames in this Ansible tutorial are different (odin -> management1, etc). So update according to your needs.
 
 You can also rely on an opensource Stack that provides all of this.
 Of course, I will recommended BlueBanquise, https://github/bluebanquise/bluebanquise, but many other stacks exist.
