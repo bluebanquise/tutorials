@@ -2052,7 +2052,7 @@ Blender animations/movies are render using CPU and GPU. In this tutorial, we wil
 
 We will render an animation of 40 frames.
 
-We would create a simple job, asking Blender to render this animation. But Blender will then use a single compute node. We have a cluster at disposal, lets take advantage of that.
+We could create a simple job, asking Blender to render this animation. But Blender will then use a single compute node. We have a cluster at disposal, lets take advantage of that.
 
 We will use Slurm job arrays (so an array of jobs) to split these 40 frames into chuck of 5 frames. Each chuck will be a unique job. Using this method, we will use all available computes nodes of our small cluster.
 
