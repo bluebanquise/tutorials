@@ -764,14 +764,14 @@ Note that the Centos already embed a very basic tftp server. But it cannot handl
 Lets grab python module first:
 
 ```
-mkdir fbtftp-0.4
-cd fbtftp-0.4
+mkdir fbtftp-0.5
+cd fbtftp-0.5
 dnf install git tar rpm-build
 git clone https://github.com/facebook/fbtftp.git .
 python3 setup.py bdist_rpm --spec-only
 cd ../
-tar cvzf fbtftp-0.4.tar.gz fbtftp-0.4
-rpmbuild -ta fbtftp-0.4.tar.gz
+tar cvzf fbtftp-0.5.tar.gz fbtftp-0.5
+rpmbuild -ta fbtftp-0.5.tar.gz
 ```
 
 #### 5.6.2. fbtftp custom server
@@ -991,7 +991,7 @@ rpmbuild -ta fbtftp_server-0.1.tar.gz --target=noarch
 Copy both packages into our extra repository, update the repository:
 
 ```
-cp /root/rpmbuild/RPMS/noarch/fbtftp-0.4-1.noarch.rpm /var/www/html/repositories/centos/8/x86_64/extra/
+cp /root/rpmbuild/RPMS/noarch/fbtftp-0.5-1.noarch.rpm /var/www/html/repositories/centos/8/x86_64/extra/
 cp /root/rpmbuild/RPMS/noarch/fbtftp_server-0.1-1.el8.noarch.rpm /var/www/html/repositories/centos/8/x86_64/extra/
 createrepo /var/www/html/repositories/centos/8/x86_64/extra/
 dnf clean all
