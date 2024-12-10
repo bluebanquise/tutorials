@@ -1,5 +1,8 @@
 # HPC system administrator tutorial
 
+IMPORTANT: This repo has been migrated to https://github.com/bluebanquise/bluebanquise/blob/master/tutorials/docs/sysadmin_servers_farm_deployment.md
+And the rendered version is available at https://bluebanquise.com/tutorials/
+
 - [HPC system administrator tutorial](#hpc-system-administrator-tutorial)
   * [1. Hardware requirements](#1-hardware-requirements)
   * [2. Useful commands](#2-useful-commands)
